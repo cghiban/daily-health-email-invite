@@ -146,7 +146,7 @@ func GetEventList() []Event {
 
 // if changing this, also change the params bellow
 const formURL = "https://docs.google.com/forms/d/e/1FAIpQLSdTBOocGsTiozct34uU3NuGGUFFXhXoN0D_OlksfLWCrHtUhg/viewform"
-const from = "dnalcadmin@cshl.edu"
+const from = "dnalc@cshl.edu"
 const htmlBody = `<html>      
 <style type="text/css"> 
 body{           
@@ -163,7 +163,7 @@ body{
 <body>
 <p>Dear Parent,</p>
 
-<p>Please remember to complete the <a href="%s">DNALC Health Survey</a> by 9 AM.
+<p>Please remember to complete the <a href="%s">%s DNALC Health Survey</a> by 9 AM.
 Submission of the survey is required for your child's participation today.</p>
 
 <p>If you are not able to certify  the  information on the health survey, please email: dnalc@cshl.edu and DO NOT attend class.</p>
@@ -180,9 +180,8 @@ func getSMTPClient() (*mail.SMTPClient, error) {
 
 	// SMTP Server
 	server.Host = "smtp.cshl.edu"
-	//server.Port = 587
 	server.Port = 25
-	//server.Username = "ghiban"
+	//server.Username = "guest"
 	//server.Encryption = mail.EncryptionTLS
 
 	// Since v2.3.0 you can specified authentication type:
@@ -190,7 +189,6 @@ func getSMTPClient() (*mail.SMTPClient, error) {
 	// - LOGIN
 	// - CRAM-MD5
 	//server.Authentication = mail.AuthLogin
-	//server.Authentication = mail.AuthPlain
 
 	//Set your smtpClient struct to keep alive connection
 	server.KeepAlive = true
@@ -209,17 +207,17 @@ func getSMTPClient() (*mail.SMTPClient, error) {
 	return server.Connect()
 }
 
-func sendEmail(smtpClient *mail.SMTPClient, formURL, to string, ccs ...string) {
+func sendEmail(smtpClient *mail.SMTPClient, today time.Time, formURL, to string, ccs ...string) {
 	email := mail.NewMSG()
 	email.SetFrom(from).
 		AddTo(to).
-		SetSubject("DNALC Health Survey")
+		SetSubject(fmt.Sprintf("%s DNALC Health Survey", today.Format("Jan 2")))
 	for _, cc := range ccs {
 		fmt.Println("adding cc ", cc)
 		email.AddCc(cc)
 	}
 
-	email.SetBody(mail.TextHTML, fmt.Sprintf(htmlBody, formURL))
+	email.SetBody(mail.TextHTML, fmt.Sprintf(htmlBody, formURL, today.Format("Jan 2")))
 
 	// Call Send and pass the client
 	err := email.Send(smtpClient)
@@ -233,12 +231,13 @@ func sendEmail(smtpClient *mail.SMTPClient, formURL, to string, ccs ...string) {
 func main() {
 	var smtpClient *mail.SMTPClient
 
-	today := time.Now().Format("2006-01-02")
-	today = "2021-02-17"
+	today := time.Now()
+	todayStr := today.Format("2006-01-02")
+	//todayStr = "2021-02-16"
 	fmt.Printf("today = %+v\n", today)
 
 	events := GetEventList()
-	fmt.Printf("found %d events\n", len(events))
+	//fmt.Printf("found %d events\n", len(events))
 	for _, e := range events {
 		start, err := time.Parse("2006-01-02T15:04:05", e.Start.Local)
 		if err != nil {
@@ -246,7 +245,7 @@ func main() {
 			fmt.Println(err.Error())
 		}
 		startDate := start.Format("2006-01-02")
-		if today != startDate {
+		if todayStr != startDate {
 			//fmt.Println("** skipping ", today, " != ", startDate)
 			continue
 		}
@@ -265,27 +264,30 @@ func main() {
 				log.Fatalln(err)
 			}
 		}
-		sendEmail(smtpClient, fullFormURL, "ghiban@cshl.edu")
+		//sendEmail(smtpClient, today, fullFormURL, "ghiban@cshl.edu", "oo@mm.ll")
 
 		//continue
-		break
+		//break
 		orders := GetOrderList(e.ID)
 		for _, o := range orders {
-			fmt.Println("\t O: ", o.Name, "\t", o.Email)
+			//fmt.Println("\t O: ", o.Name, "\t", o.Email)
+			addresses := map[string]bool{o.Email: true}
 			for _, a := range o.Attendees {
 				//fmt.Println("\t  -", a)
-				fmt.Println("\t A: ", a.Profile.Name, "\t", a.Profile.Email)
+				//fmt.Println("\t A: ", a.Profile.Name, "\t", a.Profile.Email)
+				addresses[a.Profile.Email] = true
 			}
+			uniqAddresses := make([]string, 0, len(addresses))
+			for k := range addresses {
+				uniqAddresses = append(uniqAddresses, k)
+			}
+			//fmt.Println(o.Email, " <> ", uniqAddresses)
+			fmt.Println("\t*", uniqAddresses[0], " <> ", uniqAddresses[1:])
+			//uniqAddresses = []string{"ghiban@cshl.edu"} //, "xx@zz.yy", "user@example.com"}
+			sendEmail(smtpClient, today, fullFormURL, uniqAddresses[0], uniqAddresses[1:]...)
+			//break
 		}
-		break
+		//break
 	}
 
-	/*orders := GetOrderList("136999401899")
-	for _, o := range orders {
-		fmt.Println("\t O: ", o.Name, "\t", o.Email)
-		for _, a := range o.Attendees {
-			//fmt.Println("\t  -", a)
-			fmt.Println("\t A: ", a.Profile.Name, "\t", a.Profile.Email)
-		}
-	}*/
 }
