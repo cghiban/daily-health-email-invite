@@ -3,10 +3,12 @@ package main
 import (
 	"crypto/tls"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"time"
 
 	mail "github.com/xhit/go-simple-mail/v2"
@@ -179,16 +181,25 @@ func getSMTPClient() (*mail.SMTPClient, error) {
 	server := mail.NewSMTPClient()
 
 	// SMTP Server
-	server.Host = "smtp.cshl.edu"
-	server.Port = 25
-	//server.Username = "guest"
-	//server.Encryption = mail.EncryptionTLS
+	server.Host = cfg.SMTPServer
+	server.Port = cfg.SMTPPort
+	fmt.Println("cfg.UseTLS:", cfg.UseTLS)
+	if cfg.UseTLS {
+		server.Encryption = mail.EncryptionTLS
+		// Set TLSConfig to provide custom TLS configuration. For example,
+		// to skip TLS verification (useful for testing):
+		server.TLSConfig = &tls.Config{InsecureSkipVerify: true}
+	}
 
-	// Since v2.3.0 you can specified authentication type:
-	// - PLAIN (default)
-	// - LOGIN
-	// - CRAM-MD5
-	//server.Authentication = mail.AuthLogin
+	if cfg.UseLogin {
+		// Since v2.3.0 you can specified authentication type:
+		// - PLAIN (default)
+		// - LOGIN
+		// - CRAM-MD5
+		server.Authentication = mail.AuthLogin
+		server.Username = cfg.SMTPUser
+		server.Password = cfg.SMTPPassword
+	}
 
 	//Set your smtpClient struct to keep alive connection
 	server.KeepAlive = true
@@ -198,10 +209,6 @@ func getSMTPClient() (*mail.SMTPClient, error) {
 
 	// Timeout for send the data and wait respond
 	server.SendTimeout = 5 * time.Second
-
-	// Set TLSConfig to provide custom TLS configuration. For example,
-	// to skip TLS verification (useful for testing):
-	server.TLSConfig = &tls.Config{InsecureSkipVerify: true}
 
 	// SMTP client
 	return server.Connect()
@@ -228,6 +235,45 @@ func sendEmail(smtpClient *mail.SMTPClient, today time.Time, formURL, to string,
 	}
 }
 
+type Configuration struct {
+	SMTPServer   string `json:"SMTP_SERVER"`
+	SMTPPort     int    `json:"SMTP_PORT"`
+	SMTPUser     string `json:"SMTP_USER"`
+	SMTPPassword string `json:"SMTP_PASS"`
+	UseTLS       bool   `json:"USE_TLS"`
+	UseLogin     bool   `json:"USE_LOGIN"`
+}
+
+var cfg Configuration
+
+func init() {
+	var configPath string
+	flag.StringVar(&configPath, "config", "", "path to a json config file")
+	flag.Parse()
+
+	fmt.Println("configFile:", configPath)
+
+	if configPath == "" {
+		log.Println("missing config file (use -config flag)")
+		os.Exit(1)
+	}
+
+	file, err := os.Open(configPath)
+	if err != nil {
+		log.Println(err)
+		os.Exit(1)
+	}
+	defer file.Close()
+	decoder := json.NewDecoder(file)
+	cfg = Configuration{}
+	err = decoder.Decode(&cfg)
+	if err != nil {
+		fmt.Println("error:", err)
+	}
+	fmt.Println("server: ", cfg.SMTPServer)
+	//fmt.Printf("config: %+v\n", cfg)
+}
+
 func main() {
 	var smtpClient *mail.SMTPClient
 
@@ -235,6 +281,17 @@ func main() {
 	todayStr := today.Format("2006-01-02")
 	//todayStr = "2021-02-16"
 	fmt.Printf("today = %+v\n", today)
+
+	/*
+		smtpClientX, errX := getSMTPClient()
+		if errX != nil {
+			fmt.Println("err:", errX)
+			return
+		}
+
+		sendEmail(smtpClientX, today, "http://dnalc.org/", "ghiban@cshl.edu")
+		os.Exit(1)
+	*/
 
 	events := GetEventList()
 	//fmt.Printf("found %d events\n", len(events))
@@ -285,8 +342,10 @@ func main() {
 			fmt.Println("\t*", uniqAddresses[0], " <> ", uniqAddresses[1:])
 			//uniqAddresses = []string{"ghiban@cshl.edu"} //, "xx@zz.yy", "user@example.com"}
 			sendEmail(smtpClient, today, fullFormURL, uniqAddresses[0], uniqAddresses[1:]...)
+			time.Sleep(1 * time.Second)
 			//break
 		}
+		time.Sleep(10 * time.Second)
 		//break
 	}
 
