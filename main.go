@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
@@ -79,14 +80,11 @@ type OrderListResponse struct {
 	Orders     []Order    `json:"orders"`
 }
 
-var orgID string = "164022391512"
-var token string = "X476Z2L3DRYUMT2ILGMH"
-
 func GetOrderList(eventID string) []Order {
 	url := fmt.Sprintf("https://www.eventbriteapi.com/v3/events/%s/orders/?expand=attendees", eventID)
 
 	req, _ := http.NewRequest("GET", url, nil)
-	req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", token))
+	req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", cfg.EBAPIToken))
 	client := &http.Client{}
 	resp, err := client.Do(req)
 
@@ -116,11 +114,11 @@ func GetOrderList(eventID string) []Order {
 func GetEventList() []Event {
 	client := &http.Client{}
 
-	url := fmt.Sprintf("https://www.eventbriteapi.com/v3/organizations/%s/events/?time_filter=current_future", orgID)
+	url := fmt.Sprintf("https://www.eventbriteapi.com/v3/organizations/%s/events/?time_filter=current_future", cfg.EBOrgID)
 
 	req, _ := http.NewRequest("GET", url, nil)
 
-	req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", token))
+	req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", cfg.EBAPIToken))
 
 	resp, err := client.Do(req)
 
@@ -145,37 +143,6 @@ func GetEventList() []Event {
 
 	return list.Events
 }
-
-// if changing this, also change the params bellow
-const formURL = "https://docs.google.com/forms/d/e/1FAIpQLSdTBOocGsTiozct34uU3NuGGUFFXhXoN0D_OlksfLWCrHtUhg/viewform"
-const from = "dnalc@cshl.edu"
-const htmlBody = `<html>      
-<style type="text/css"> 
-body{           
-  background:#FFFFFF;
-  font-family: Verdana, Arial, Helvetica, sans-serif;
-  text-align:left;
-  font-size: 1em;
-  color:#055596;
-  margin:10;
-  padding:0;
-} 
-.redtext { color: #990000;}
-</style>
-<body>
-<p>Dear Parent,</p>
-
-<p>Please remember to complete the <a href="%s">%s DNALC Health Survey</a> by 9 AM.
-Submission of the survey is required for your child's participation today.</p>
-
-<p>If you are not able to certify  the  information on the health survey, please email: dnalc@cshl.edu and DO NOT attend class.</p>
-<p>If for some reason you cannot submit the form electronically, paper copies will be available at the DNALC.</p>
-
-<p>
-Have a Great Day,<br>
-The DNALC Team</p>
-</body>
-</html>`
 
 func getSMTPClient() (*mail.SMTPClient, error) {
 	server := mail.NewSMTPClient()
@@ -216,9 +183,9 @@ func getSMTPClient() (*mail.SMTPClient, error) {
 
 func sendEmail(smtpClient *mail.SMTPClient, today time.Time, formURL, to string, ccs ...string) {
 	email := mail.NewMSG()
-	email.SetFrom(from).
+	email.SetFrom(cfg.From).
 		AddTo(to).
-		SetSubject(fmt.Sprintf("%s DNALC Health Survey", today.Format("Jan 2")))
+		SetSubject(fmt.Sprintf(cfg.SubjectTmpl, today.Format("Jan 2")))
 	for _, cc := range ccs {
 		fmt.Println("adding cc ", cc)
 		email.AddCc(cc)
@@ -236,15 +203,24 @@ func sendEmail(smtpClient *mail.SMTPClient, today time.Time, formURL, to string,
 }
 
 type Configuration struct {
-	SMTPServer   string `json:"SMTP_SERVER"`
-	SMTPPort     int    `json:"SMTP_PORT"`
-	SMTPUser     string `json:"SMTP_USER"`
-	SMTPPassword string `json:"SMTP_PASS"`
-	UseTLS       bool   `json:"USE_TLS"`
-	UseLogin     bool   `json:"USE_LOGIN"`
+	From             string            `json:"FROM"`
+	TemplateFile     string            `json:"EMAIL_TMPL_FILE"`
+	SubjectTmpl      string            `json:"EMAIL_SUBJECT_TMPL"`
+	SurveyFormURL    string            `json:"FORM_URL"`
+	SurveyFormParams map[string]string `json:"FORM_PARAMS"`
+	SMTPServer       string            `json:"SMTP_SERVER"`
+	SMTPPort         int               `json:"SMTP_PORT"`
+	SMTPUser         string            `json:"SMTP_USER"`
+	SMTPPassword     string            `json:"SMTP_PASS"`
+	UseTLS           bool              `json:"USE_TLS"`
+	UseLogin         bool              `json:"USE_LOGIN"`
+	EBOrgID          string            `json:"EB_ORG_ID"`
+	EBAPIToken       string            `json:"EB_API_TOKEN"`
+	MockDate         string            `json:"MOCK_DATE,omitempty"`
 }
 
-var cfg Configuration
+var cfg Configuration // config object
+var htmlBody string   // html template
 
 func init() {
 	var configPath string
@@ -252,7 +228,6 @@ func init() {
 	flag.Parse()
 
 	fmt.Println("configFile:", configPath)
-
 	if configPath == "" {
 		log.Println("missing config file (use -config flag)")
 		os.Exit(1)
@@ -272,6 +247,17 @@ func init() {
 	}
 	fmt.Println("server: ", cfg.SMTPServer)
 	//fmt.Printf("config: %+v\n", cfg)
+
+	// read the contents of the html template
+	if cfg.TemplateFile == "" {
+		log.Fatalln("EMAIL_TMPL_FILE is not set in the config file")
+	}
+	contents, err := ioutil.ReadFile(cfg.TemplateFile)
+	if err != nil {
+		log.Fatalln("can't open file: ", cfg.TemplateFile, err)
+	}
+
+	htmlBody = string(contents)
 }
 
 func main() {
@@ -279,7 +265,9 @@ func main() {
 
 	today := time.Now()
 	todayStr := today.Format("2006-01-02")
-	//todayStr = "2021-02-16"
+	if cfg.MockDate != "" {
+		todayStr = cfg.MockDate
+	}
 	fmt.Printf("today = %+v\n", today)
 
 	/*
@@ -289,12 +277,11 @@ func main() {
 			return
 		}
 
-		sendEmail(smtpClientX, today, "http://dnalc.org/", "ghiban@cshl.edu")
+		sendEmail(smtpClientX, today, "http://example.com/", "user@example.com")
 		os.Exit(1)
 	*/
 
 	events := GetEventList()
-	//fmt.Printf("found %d events\n", len(events))
 	for _, e := range events {
 		start, err := time.Parse("2006-01-02T15:04:05", e.Start.Local)
 		if err != nil {
@@ -309,19 +296,23 @@ func main() {
 		fmt.Println(e.Name.Text, "\t", e.Start.Local, "\t", e.Start.UTC)
 		fmt.Printf("start = %+v\n", start)
 
-		// this is oonly for the form defined above..
 		params := url.Values{}
-		params.Add("usp", "pp_url")
-		params.Add("entry.479301265", e.Name.Text)
-		fullFormURL := formURL + "?" + params.Encode()
-		fmt.Println("url: ", fullFormURL)
+		for k, v := range cfg.SurveyFormParams {
+			if v == "???" {
+				v = e.Name.Text
+			}
+			params.Add(k, v)
+			//fmt.Printf("*** %s: %s\n", k, v)
+		}
+		fullFormURL := cfg.SurveyFormURL + "?" + params.Encode()
 		if smtpClient == nil {
 			smtpClient, err = getSMTPClient()
 			if err != nil {
 				log.Fatalln(err)
 			}
 		}
-		//sendEmail(smtpClient, today, fullFormURL, "ghiban@cshl.edu", "oo@mm.ll")
+		fmt.Println("URL: ", fullFormURL)
+		//sendEmail(smtpClient, today, fullFormURL, "user@domain.com", "oo@mm.ll")
 
 		//continue
 		//break
@@ -340,7 +331,6 @@ func main() {
 			}
 			//fmt.Println(o.Email, " <> ", uniqAddresses)
 			fmt.Println("\t*", uniqAddresses[0], " <> ", uniqAddresses[1:])
-			//uniqAddresses = []string{"ghiban@cshl.edu"} //, "xx@zz.yy", "user@example.com"}
 			sendEmail(smtpClient, today, fullFormURL, uniqAddresses[0], uniqAddresses[1:]...)
 			time.Sleep(1 * time.Second)
 			//break
