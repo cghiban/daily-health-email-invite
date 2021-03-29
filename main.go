@@ -81,7 +81,7 @@ type OrderListResponse struct {
 }
 
 func GetOrderList(eventID string) []Order {
-	url := fmt.Sprintf("https://www.eventbriteapi.com/v3/events/%s/orders/?expand=attendees", eventID)
+	url := fmt.Sprintf("https://www.eventbriteapi.com/v3/events/%s/orders/?expand=attendeess&status=activ", eventID)
 
 	req, _ := http.NewRequest("GET", url, nil)
 	req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", cfg.EBAPIToken))
